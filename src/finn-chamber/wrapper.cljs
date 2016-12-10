@@ -43,8 +43,28 @@
 (defn set-immutable [sprite val]
   (set! (.. sprite -body -immovable) val))
 
+(defn input-keyboard [game]
+  (.. game -input -keyboard))
+
+(defn keyboard-add-key-capture
+  "Stop key from propagating to the browser"
+  [game keys]
+  (.addKeyCapture (input-keyboard game) key))
+
+(defn keyboard-add-key [game key]
+  (keyboard-add-key-capture game [key])
+  (.addKey (input-keyboard game) key))
+
 (defn create-cursor-keys [game]
-  (.. game -input -keyboard createCursorKeys))
+  (keyboard-add-key-capture game [js/Phaser.Keyboard.LEFT js/Phaser.Keyboard.RIGHT js/Phaser.Keyboard.UP js/Phaser.Keyboard.DOWN])
+  (let [cursor (.createCursorKeys (input-keyboard game))]
+    {:left (.-left cursor)
+     :right (.-right cursor)
+     :up (.-up cursor)
+     :down (.-down cursor)}))
+
+(defn key-down? [k]
+  (.-isDown k))
 
 (defn set-anchor [sprite x y]
   (.setTo (.-anchor sprite) x y))

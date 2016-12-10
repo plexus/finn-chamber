@@ -14,7 +14,9 @@
                                           set-velocity-y
                                           set-anchor
                                           physics-collide
-                                          create-cursor-keys]]
+                                          create-cursor-keys
+                                          keyboard-add-key
+                                          key-down?]]
             [finn-chamber.levels :as levels]))
 
 
@@ -38,12 +40,15 @@
     (set-immutable floor true)
     floor))
 
-(defn draw-floors [game group spec]
-  (doall (map (fn [y tiles]
-                (doall (map-indexed (fn [x yes-no]
-                                      (when yes-no (draw-floor-tile game group x y)))
-                                    tiles))
-                ) floor-positions spec)))
+(defn draw-floors [{:keys [game level] :as db}]
+  (let [spec (:floors level)
+        group (create-group game)]
+    (doall (map (fn [y tiles]
+                  (doall (map-indexed (fn [x yes-no]
+                                        (when yes-no (draw-floor-tile game group x y)))
+                                      tiles))
+                  ) floor-positions spec))
+    (assoc-in db [:groups :floor] group)))
 
 (defn item-pos-x [x]
   (* x 16))
@@ -74,7 +79,8 @@
 (defn create-finn [game]
   (let [finn (add-sprite game 900 (+ 16 48) "finn")]
     (.setTo (.-scale finn) 1.5)
-    (.setTo (.-anchor finn) 0.5 0.5)
+    (set-anchor finn 0.5 0.5)
+    (set-gravity finn 600)
     finn))
 
 (defn sprite-scale-x [sprite amount]
@@ -107,32 +113,31 @@
 
   (set! (.. game -world -enableBody)  true)
 
-  (let [{:keys [level]} @db]
+  (swap! db #(-> %
+                 (assoc :cursor (create-cursor-keys game)
+                        :space-key (keyboard-add-key game js/Phaser.Keyboard.SPACEBAR))
 
-    (let [floors (create-group game)
-          finn (create-finn game)]
-
-      (draw-floors game floors (:floors level))
-
-      (set-gravity finn 600)
-      (swap! db #(-> %
-                     (assoc :finn finn
-                            :floors floors
-                            :cursor (create-cursor-keys game))
-                     draw-levers)))))
+                 draw-floors
+                 draw-levers
+                 (assoc :finn (create-finn game)))))
 
 (defn game-update [{:keys [game]}]
 
-  (let [{:keys [finn floors cursor]} @db]
-    (physics-collide game floors finn)
+  (let [{:keys [finn groups cursor space-key]} @db
+        {:keys [left right up]} cursor
+        {floor-group :floor} groups]
+    (physics-collide game floor-group finn)
 
     (cond
-      (.. cursor -left -isDown)  (finn-go-left finn)
-      (.. cursor -right -isDown) (finn-go-right finn)
-      :else                      (set-velocity-x finn 0))
+      (key-down? left)  (finn-go-left finn)
+      (key-down? right) (finn-go-right finn)
+      :else             (set-velocity-x finn 0))
 
-    (when (and (.. cursor -up -isDown) (.. finn -body -touching -down))
+    (when (and (key-down? up) (.. finn -body -touching -down))
       (set-velocity-y finn -400))
+
+    (when  (key-down? space-key)
+      )
     ))
 
 (defn restart-game [{:keys [game]}]
@@ -143,3 +148,5 @@
                                     :update  #(game-update @db)})
 
 (restart-game @db)
+
+(set! (.-z (:finn @db)) 100)
