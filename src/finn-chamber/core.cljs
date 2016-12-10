@@ -17,6 +17,7 @@
                                           physics-overlap
                                           create-cursor-keys
                                           keyboard-add-key
+                                          add-tween
                                           key-down?]]
             [finn-chamber.levels :as levels]))
 
@@ -58,13 +59,14 @@
 (defn create-lever-sprite [game x y angle]
   (let [lever (add-sprite game (item-pos-x x) (item-pos-y y) "lever")]
     (set! (.-angle lever) angle)
-    (.setTo (.-scale lever) 1.3)
+    (.setTo (.-scale lever) 1.2)
     (set-anchor lever 0.5 1)
     lever))
 
 (defn create-lever-base-sprite [game x y]
   (let [base (add-sprite game (item-pos-x x) (item-pos-y y) "lever_base")]
     (set-anchor base 0.5 1)
+    (.setTo (.-scale base) 0.8)
     base))
 
 (defn draw-levers [{{:keys [levers]} :level game :game :as db}]
@@ -108,7 +110,10 @@
   (let [{{levers :levers} :level :keys [finn game]} @db]
     (doseq [[_ {:keys [lever lever-base]}] levers]
       (when (or (physics-overlap game finn lever) (physics-overlap game finn lever-base))
-        (set! (.-angle lever) (* -1 (.-angle lever)))))))
+        (add-tween game lever {:angle (* -1 (.-angle lever))} 300
+                   #_js/Phaser.Easing.Circular.Out
+                   js/Phaser.Easing.Bounce.Out
+                   )))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -154,10 +159,16 @@
     ))
 
 (defn restart-game [{:keys [game]}]
-  (start-game-state game "main"))
+  )
 
-(add-game-state (:game @db) "main" {:preload #(game-preload @db)
-                                    :create  #(game-create @db)
-                                    :update  #(game-update @db)})
 
 (restart-game @db)
+
+
+(defonce started
+  (do
+    (add-game-state (:game @db) "main" {:preload #(game-preload @db)
+                                        :create  #(game-create @db)
+                                        :update  #(game-update @db)}
+                    )
+    (start-game-state (:game @db) "main")))

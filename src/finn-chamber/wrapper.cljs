@@ -71,3 +71,8 @@
 
 (defn set-anchor [sprite x y]
   (.setTo (.-anchor sprite) x y))
+
+(defn add-tween [game item props & args]
+  (let [tween (.. game -add (tween item))
+        to-fn (.bind (.-to tween) tween)]
+    (.start (apply to-fn (clj->js props) args))))
