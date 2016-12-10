@@ -142,5 +142,4 @@
                                     :create  #(game-create @db)
                                     :update  #(game-update @db)})
 
-
 (restart-game @db)
