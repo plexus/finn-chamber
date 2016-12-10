@@ -45,3 +45,6 @@
 
 (defn create-cursor-keys [game]
   (.. game -input -keyboard createCursorKeys))
+
+(defn set-anchor [sprite x y]
+  (.setTo (.-anchor sprite) x y))
