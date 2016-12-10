@@ -40,6 +40,9 @@
 (defn physics-collide [game sprite1 sprite2]
   (.. game -physics -arcade (collide sprite1 sprite2)))
 
+(defn physics-overlap [game sprite1 sprite2]
+  (.. game -physics -arcade (overlap sprite1 sprite2)))
+
 (defn set-immutable [sprite val]
   (set! (.. sprite -body -immovable) val))
 

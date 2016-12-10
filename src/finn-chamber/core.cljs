@@ -14,6 +14,7 @@
                                           set-velocity-y
                                           set-anchor
                                           physics-collide
+                                          physics-overlap
                                           create-cursor-keys
                                           keyboard-add-key
                                           key-down?]]
@@ -26,8 +27,6 @@
                    :game (js/Phaser.Game. 1280 720)}))
 
 (def floor-positions [0 7 14 21 29 37 44])
-
-(keys (:levers (:level @db)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -59,6 +58,7 @@
 (defn create-lever-sprite [game x y angle]
   (let [lever (add-sprite game (item-pos-x x) (item-pos-y y) "lever")]
     (set! (.-angle lever) angle)
+    (.setTo (.-scale lever) 1.3)
     (set-anchor lever 0.5 1)
     lever))
 
@@ -68,13 +68,18 @@
     base))
 
 (defn draw-levers [{{:keys [levers]} :level game :game :as db}]
-  (reduce (fn [db lever-id]
-            (let [{:keys [x y]} (get levers lever-id)
-                  lever (create-lever-sprite game x y -45)
-                  lever-base (create-lever-base-sprite game x y)]
-              (assoc-in db [:level :levers lever-id :sprite] lever)
-              (assoc-in db [:level :levers lever-id :base] lever-base))
-            ) db (keys levers)))
+  (let [group (create-group game)]
+    (-> (reduce (fn [db lever-id]
+                  (let [{:keys [x y]} (get levers lever-id)
+                        lever (create-lever-sprite game x y -45)
+                        lever-base (create-lever-base-sprite game x y)]
+                    (.add group lever)
+                    (.add group lever-base)
+                    (-> db
+                        (assoc-in [:level :levers lever-id :lever] lever)
+                        (assoc-in [:level :levers lever-id :lever-base] lever-base)))
+                  ) db (keys levers))
+        (assoc-in [:groups :levers] group))))
 
 (defn create-finn [game]
   (let [finn (add-sprite game 900 (+ 16 48) "finn")]
@@ -99,6 +104,14 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(defn handle-space! []
+  (let [{{levers :levers} :level :keys [finn game]} @db]
+    (doseq [[_ {:keys [lever lever-base]}] levers]
+      (when (or (physics-overlap game finn lever) (physics-overlap game finn lever-base))
+        (set! (.-angle lever) (* -1 (.-angle lever)))))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defn game-preload [{:keys [game]}]
   (load-image game "background-tiles" "images/background-tiles.png")
   (load-image game "floor" "images/floor.png")
@@ -113,19 +126,21 @@
 
   (set! (.. game -world -enableBody)  true)
 
-  (swap! db #(-> %
-                 (assoc :cursor (create-cursor-keys game)
-                        :space-key (keyboard-add-key game js/Phaser.Keyboard.SPACEBAR))
+  (let [space-key (keyboard-add-key game js/Phaser.Keyboard.SPACEBAR)]
+    (.add (.-onDown space-key) handle-space!)
 
-                 draw-floors
-                 draw-levers
-                 (assoc :finn (create-finn game)))))
+    (swap! db #(-> %
+                   (assoc :cursor (create-cursor-keys game))
+                   (assoc :space-key space-key)
+                   draw-floors
+                   draw-levers
+                   (assoc :finn (create-finn game))))))
 
-(defn game-update [{:keys [game]}]
+(defn game-update [{:keys [finn groups cursor space-key level game]}]
 
-  (let [{:keys [finn groups cursor space-key]} @db
-        {:keys [left right up]} cursor
-        {floor-group :floor} groups]
+  (let [{:keys [left right up]} cursor
+        {:keys [levers]} level
+        {floor-group :floor lever-group :levers} groups]
     (physics-collide game floor-group finn)
 
     (cond
@@ -136,8 +151,6 @@
     (when (and (key-down? up) (.. finn -body -touching -down))
       (set-velocity-y finn -400))
 
-    (when  (key-down? space-key)
-      )
     ))
 
 (defn restart-game [{:keys [game]}]
@@ -148,5 +161,3 @@
                                     :update  #(game-update @db)})
 
 (restart-game @db)
-
-(set! (.-z (:finn @db)) 100)
