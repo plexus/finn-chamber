@@ -15,6 +15,8 @@
   :profiles {:dev {:dependencies [[com.cemerick/piggieback "0.2.1"]
                                   [figwheel-sidecar "0.5.8"]]}}
 
+  :plugins [[lein-cljsbuild "1.1.4"]]
+
   :cljsbuild {
     :builds [{:id "dev"
               :source-paths ["src"]
