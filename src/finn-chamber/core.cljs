@@ -251,12 +251,12 @@
         (update :history pop))
     db))
 
-(defn setup-handlers [{:keys [keys finn] :as _db}]
+(defn setup-handlers [{:keys [keys] :as _db}]
   (let [{:keys [left right space z]} keys]
     (on-key-down space #(dispatch! handle-space))
 
-    (on-key-down left #(play-animation finn "walk" 10 true))
-    (on-key-down right #(play-animation finn "walk" 10 true))
+    (on-key-down left #(play-animation (:finn @db) "walk" 10 true))
+    (on-key-down right #(play-animation (:finn @db) "walk" 10 true))
 
     (on-key-down z #(swap! db handle-undo)))
 
@@ -274,27 +274,31 @@
   db)
 
 (defn start-level [db]
-  (let [db (-> db
-               (merge (levels/levels (:level db)))
-               (assoc :frames 0)
-               draw-floors
-               draw-levers
-               draw-walls
-               create-finn
-               setup-handlers)]
-    (set-velocity-x (:finn db) -400)
-    db))
+  (-> db
+      (merge (levels/levels (:level db)))
+      (assoc :frames 0)
+      draw-floors
+      draw-levers
+      draw-walls
+      create-finn))
 
-(defn next-level! [{:keys [walls floors levers finn] :as db}]
-  (let [sprites
-        (concat (mapcat #(map :sprite %) [walls floors (vals levers)])
-                (map :base-sprite (vals levers))
-                [finn])]
-    (doseq [sprite sprites]
-      (if sprite
-        (.destroy sprite)))
+(defn next-level! [{:keys [level walls floors levers finn] :as db}]
+  (if (= (inc level) (count levels/levels))
+    (js/alert "good job!")
+    (let [sprites (concat (mapcat #(map :sprite %) [walls floors (vals levers)])
+                          (map :base-sprite (vals levers))
+                          [finn])]
 
-    (start-level (update db :level inc))))
+      (doseq [sprite sprites]
+        (if sprite
+          (.destroy sprite)))
+
+      (-> db
+          (update :level inc)
+          (assoc :history '())
+          (dissoc :segments)
+          (dissoc :groups)
+          start-level))))
 
 (defn game-create [{:keys [game] :as db}]
   (doto game
@@ -309,6 +313,7 @@
       (assoc :keys (create-cursor-keys game))
       (assoc-in [:keys :space] (keyboard-add-key game js/Phaser.Keyboard.SPACEBAR))
       (assoc-in [:keys :z] (keyboard-add-key game js/Phaser.Keyboard.Z))
+      setup-handlers
       start-level))
 
 (defn finn-handle-keys [finn keys]
@@ -339,7 +344,9 @@
     (physics-collide game wall-group finn)
 
     (if (< frames 20)
-      (finn-go-left finn)
+      (if (< (.-x finn) 600)
+        (finn-go-right finn)
+        (finn-go-left finn))
       (finn-handle-keys finn keys))
 
 
@@ -348,7 +355,7 @@
         (set! (.-exists sprite) false)
         (set! (.-exists sprite) true)))
 
-    (if-not (< 0 (.-x finn) 1280)
+    (if-not (< -1 (.-x finn) 1281)
       (next-level! db)
       (-> db
           increase-frame-count
