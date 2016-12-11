@@ -19,7 +19,7 @@
     :builds [{:id "dev"
               :source-paths ["src"]
 
-              :figwheel { :on-jsload "finn-chamber.core/restart-game" }
+              :figwheel { :on-jsload "finn-chamber.core/on-reload" }
 
               :compiler {:main finn-chamber.core
                          :asset-path "js/compiled/out"

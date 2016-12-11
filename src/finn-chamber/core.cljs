@@ -1,36 +1,35 @@
 (ns finn-chamber.core
-  (:require [cljsjs.phaser]
+  (:require [clojure.data :refer [diff]]
+            [finn-chamber.levels :as levels]
             [finn-chamber.math :refer [abs]]
-            [finn-chamber.util :refer [map-vals]]
-            [finn-chamber.wrapper :refer [load-image
-                                          load-spritesheet
-                                          add-tile-sprite
-                                          add-sprite
+            [finn-chamber.util :refer [deep-merge map-vals]]
+            [finn-chamber.wrapper :refer [add-animation
                                           add-game-state
-                                          add-animation
-                                          play-animation
-                                          stop-animations
-                                          start-game-state
-                                          start-physics-system!
+                                          add-sprite
+                                          add-tile-sprite
+                                          add-tween
+                                          create-cursor-keys
                                           create-group
-                                          set-gravity
-                                          set-immutable
-                                          set-velocity-x
-                                          set-velocity-y
-                                          set-anchor
-                                          set-scale
-                                          set-angle
-                                          set-alpha
-                                          sprite-scale-x
+                                          key-down?
+                                          keyboard-add-key
+                                          load-image
+                                          load-spritesheet
+                                          on-key-down
                                           physics-collide
                                           physics-overlap
-                                          create-cursor-keys
-                                          keyboard-add-key
-                                          add-tween
-                                          on-key-down
-                                          on-key-up
-                                          key-down?]]
-            [finn-chamber.levels :as levels]))
+                                          play-animation
+                                          set-alpha
+                                          set-anchor
+                                          set-angle
+                                          set-gravity
+                                          set-immutable
+                                          set-scale
+                                          set-velocity-x
+                                          set-velocity-y
+                                          sprite-scale-x
+                                          start-game-state
+                                          start-physics-system!
+                                          stop-animations]]))
 
 (enable-console-print!)
 
@@ -38,9 +37,7 @@
   ISeqable
   (-seq [group]
     (let [children (.-children group)]
-      (map #(aget children %) (range (.-length children)))))
-
-    )
+      (map #(aget children %) (range (.-length children))))))
 
 ;;   ILookup
 ;;   (-lookup
@@ -49,10 +46,13 @@
 
 
 
+(defonce initial-state
+  {:level 0
+   :floor-positions [2 9 16 23 30 37 44]
+   :game (js/Phaser.Game. 1280 720)
+   :history '()})
 
-(defonce db (atom {:level levels/level-1
-                   :floor-positions [2 9 16 23 30 37 44]
-                   :game (js/Phaser.Game. 1280 720)}))
+(defonce db (atom initial-state))
 
 (defn dispatch! [f & args]
   (apply swap! db f args))
@@ -87,10 +87,10 @@
 (defn draw-barrier-tiles [game y-mapping spec visible?]
   (->> spec
        (mapcat (fn [{:keys [x y group] :as tile}]
-                (let [x (grid-pos x)
-                      ys (y-mapping y)]
-                  (for [y ys]
-                    (assoc tile :sprite (draw-barrier-sprite game x y (visible? group)))))))
+                 (let [x (grid-pos x)
+                       ys (y-mapping y)]
+                   (for [y ys]
+                     (assoc tile :sprite (draw-barrier-sprite game x y (visible? group)))))))
        doall))
 
 (defn floor-y-mapping [floor-positions]
@@ -103,20 +103,19 @@
           end (nth floor-positions (inc y))]
       (map grid-pos (range (inc start) end)))))
 
-(defn draw-barriers [{:keys [game level] :as db} type y-mapping]
-  (let [spec (get level type)
-        visible? (:visible level)
-        tiles (draw-barrier-tiles game y-mapping spec visible?)
+(defn draw-barriers [{:keys [game visible] :as db} type y-mapping]
+  (let [spec (get db type)
+        tiles (draw-barrier-tiles game y-mapping spec visible)
         groups (apply array (group-by :group tiles))]
     (-> db
         (assoc type tiles)
         (assoc-in [:groups type] (create-group game (remove nil? (map :sprite tiles))))
         (update :segments #(merge-with into % groups)))))
 
-(defn draw-floors [{:keys [game level floor-positions] :as db}]
+(defn draw-floors [{:keys [game floor-positions] :as db}]
   (draw-barriers db :floors (floor-y-mapping floor-positions)))
 
-(defn draw-walls [{:keys [game floor-positions level] :as db}]
+(defn draw-walls [{:keys [game floor-positions] :as db}]
   (draw-barriers db :walls (wall-y-mapping floor-positions)))
 
 (defn create-lever-sprite [game floor-positions x y angle]
@@ -130,7 +129,7 @@
     (set-scale 0.8)
     (set-anchor 0.5 1)))
 
-(defn draw-levers [{{:keys [levers]} :level :keys [game floor-positions] :as db}]
+(defn draw-levers [{:keys [game floor-positions levers] :as db}]
   (let [group (create-group game)]
     (-> (reduce (fn [db lever-id]
                   (let [{:keys [x y state]} (get levers lever-id)
@@ -139,26 +138,31 @@
                     (.add group lever)
                     (.add group lever-base)
                     (-> db
-                        (assoc-in [:level :levers lever-id :sprite] lever)
-                        (assoc-in [:level :levers lever-id :base-sprite] lever-base)))
+                        (assoc-in [:levers lever-id :sprite] lever)
+                        (assoc-in [:levers lever-id :base-sprite] lever-base)))
                   ) db (keys levers))
         (assoc-in [:groups :levers] group))))
 
-(defn create-finn [game]
-  (let [finn (add-sprite game 900 (+ 16 48) "finn")]
-    (.setTo (.-scale finn) 1.5)
-    (set-anchor finn 0.5 0.5)
-    (set-gravity finn 600)
-    (add-animation finn "walk")
-    finn))
+(defn finn-start-pos [{:keys [floor-positions] :as db}]
+  (let [{:keys [x y]} (-> db :segments :$ first)]
+    [(grid-pos x) (item-floor-pos floor-positions (inc y))]))
+
+(defn create-finn [{:keys [game] :as db}]
+  (let [[x y] (finn-start-pos db)]
+    (assoc db :finn
+           (doto (add-sprite game x y "finn")
+             (set-scale 1.5)
+             (set-anchor 0.5 1)
+             (set-gravity  600)
+             (add-animation  "walk")))))
 
 (defn finn-go-left [finn]
   (sprite-scale-x finn (abs (.. finn -scale -x)))
-  (set-velocity-x finn -200))
+  (set-velocity-x finn -400))
 
 (defn finn-go-right [finn]
   (sprite-scale-x finn (* -1 (abs (.. finn -scale -x))))
-  (set-velocity-x finn 200))
+  (set-velocity-x finn 400))
 
 (defn finn-jump [finn]
   (set-velocity-y finn -200))
@@ -166,25 +170,38 @@
 (defn hide-segment [{:keys [game] :as db} name]
   (let [sprites (get-in db [:segments name])]
     (run!
-     #(add-tween game (:sprite %) {:alpha 0} 700 js/Phaser.Easing.Cubic.Out)
+     #(when-not (= (.-alpha %) 0)
+        (add-tween game (:sprite %) {:alpha 0} 700 js/Phaser.Easing.Cubic.Out))
      sprites))
   db)
 
 (defn show-segment [{:keys [game] :as db} name]
   (let [sprites (get-in db [:segments name])]
     (run!
-     #(add-tween game (:sprite %) {:alpha 1} 700 js/Phaser.Easing.Cubic.Out)
+     #(when-not (= (.-alpha %) 1)
+        (add-tween game (:sprite %) {:alpha 1} 700 js/Phaser.Easing.Cubic.Out))
      sprites))
   db)
 
-(defn show-hide-segments [db [on-left on-right] state]
+(defn update-visible [db [on-left on-right] state]
   (let [hide (case state :left on-left :right on-right)
         show (case state :left on-right :right on-left)]
-    (run! #(show-segment db %) show)
-    (run! #(hide-segment db %) hide)
     (-> db
-        (update-in [:level :visible] into show)
-        (update-in [:level :visible] #(into #{} (remove hide %))))))
+        (update-in [:visible] into show)
+        (update-in [:visible] #(into #{} (remove hide %))))))
+
+(defn show-hide-segments [db]
+  (doseq [[name _] (:segments db)]
+    (if (-> db :visible name)
+      (show-segment db name)
+      (hide-segment db name)))
+  db)
+
+(defn game-state [db]
+  {:levers (-> db :levers)
+   :visible (-> db :visible)
+   :finn {:x (.-x (:finn db))
+          :y (.-y (:finn db))}})
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -197,28 +214,53 @@
 (defn animate-lever [game sprite state]
   (add-tween game
              sprite
-             {:angle (-> state state-flip state-angle)} 300
+             {:angle (-> state state-angle)} 300
              js/Phaser.Easing.Bounce.Out))
 
 (defn pull-lever [{:keys [game] :as db} lever]
   (let [{:keys [sprite base-sprite state hides name]} lever]
-    (animate-lever game sprite state)
+    (animate-lever game sprite (state-flip state))
     (-> db
-        (show-hide-segments hides state)
-        (update-in [:level :levers name :state] state-flip))))
+        (#(update % :history conj (game-state %)))
+        (update-visible hides state)
+        show-hide-segments
+        (update-in [:levers name :state] state-flip))))
 
-(defn handle-space [{{:keys [levers]} :level :keys [finn game] :as db}]
+(defn handle-space [{:keys [levers finn game] :as db}]
   (if-let [lever (some #(finn-over-lever? game finn %) (vals levers))]
     (pull-lever db lever)
     db))
 
-(defn setup-handlers [{:keys [space-key cursor-keys finn] :as db}]
-  (let [{:keys [left right]} cursor-keys]
-    (on-key-down space-key #(dispatch! handle-space))
+(defn restore-game-state [{:keys [finn game] :as db} state]
+  (set! (.-x finn) (-> state :finn :x))
+  (set! (.-y finn) (-> state :finn :y))
+
+  (doseq [{:keys [name sprite state]} (vals (:levers state))]
+    (if-not (= state (get-in db [:levers name :state]))
+      (animate-lever game sprite state)))
+
+  (-> db
+      (update :levers deep-merge (:levers state))
+      (assoc :visible (:visible state))
+      show-hide-segments))
+
+(defn handle-undo [{:keys [game finn history] :as db}]
+  (if-let [state (first history)]
+    (-> db
+        (restore-game-state state)
+        (update :history pop))
+    db))
+
+(defn setup-handlers [{:keys [keys finn] :as _db}]
+  (let [{:keys [left right space z]} keys]
+    (on-key-down space #(dispatch! handle-space))
 
     (on-key-down left #(play-animation finn "walk" 10 true))
-    (on-key-down right #(play-animation finn "walk" 10 true)))
-  db)
+    (on-key-down right #(play-animation finn "walk" 10 true))
+
+    (on-key-down z #(swap! db handle-undo)))
+
+  _db)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -231,6 +273,29 @@
   (load-image game "wall" "images/wall.png")
   db)
 
+(defn start-level [db]
+  (let [db (-> db
+               (merge (levels/levels (:level db)))
+               (assoc :frames 0)
+               draw-floors
+               draw-levers
+               draw-walls
+               create-finn
+               setup-handlers)]
+    (set-velocity-x (:finn db) -400)
+    db))
+
+(defn next-level! [{:keys [walls floors levers finn] :as db}]
+  (let [sprites
+        (concat (mapcat #(map :sprite %) [walls floors (vals levers)])
+                (map :base-sprite (vals levers))
+                [finn])]
+    (doseq [sprite sprites]
+      (if sprite
+        (.destroy sprite)))
+
+    (start-level (update db :level inc))))
+
 (defn game-create [{:keys [game] :as db}]
   (doto game
     (start-physics-system!)
@@ -240,26 +305,14 @@
   (set! (.. game -world -enableBody)  true)
 
   (-> db
-      (assoc :cursor-keys (create-cursor-keys game))
-      (assoc :space-key (keyboard-add-key game js/Phaser.Keyboard.SPACEBAR))
-      draw-floors
-      draw-levers
-      draw-walls
-      (assoc :finn (create-finn game))
-      setup-handlers))
+      (assoc :frames 0)
+      (assoc :keys (create-cursor-keys game))
+      (assoc-in [:keys :space] (keyboard-add-key game js/Phaser.Keyboard.SPACEBAR))
+      (assoc-in [:keys :z] (keyboard-add-key game js/Phaser.Keyboard.Z))
+      start-level))
 
-(defn game-update [{:keys [finn groups cursor-keys space-key level game] :as db}]
-  (let [{:keys [left right up]} cursor-keys
-        {:keys [levers]} level
-        {floor-group :floors lever-group :levers wall-group :walls} groups]
-    (physics-collide game floor-group finn)
-    (physics-collide game wall-group finn)
-
-    (doseq [sprite floor-group]
-      (if (= 0 (.-alpha sprite))
-        (set! (.-exists sprite) false)
-        (set! (.-exists sprite) true)))
-
+(defn finn-handle-keys [finn keys]
+  (let [{:keys [left right up]} keys]
     (cond
       (key-down? left)  (finn-go-left finn)
       (key-down? right) (finn-go-right finn)
@@ -267,14 +320,67 @@
                             (stop-animations finn)))
 
     (when (and (key-down? up) (.. finn -body -touching -down))
-      (set-velocity-y finn -400))
+      (set-velocity-y finn -400))))
 
+(defn increase-frame-count [db]
+  (update db :frames inc))
+
+(defn handle-end-of-intro [{:keys [frames] :as db}]
+  (if (= frames 20)
+    (-> db
+        (update :visible conj :$)
+        show-hide-segments)
     db))
 
+(defn game-update [{:keys [frames finn groups keys game levers] :as db}]
+  (let [{floor-group :floors lever-group :levers wall-group :walls} groups]
 
-(defonce started
-  (do
-    (add-game-state (:game @db) "main" {:preload #(swap! db game-preload)
-                                        :create  #(swap! db game-create)
-                                        :update  #(swap! db game-update)})
-    (start-game-state (:game @db) "main")))
+    (physics-collide game floor-group finn)
+    (physics-collide game wall-group finn)
+
+    (if (< frames 20)
+      (finn-go-left finn)
+      (finn-handle-keys finn keys))
+
+
+    (doseq [sprite (concat floor-group wall-group)]
+      (if (= 0 (.-alpha sprite))
+        (set! (.-exists sprite) false)
+        (set! (.-exists sprite) true)))
+
+    (if-not (< 0 (.-x finn) 1280)
+      (next-level! db)
+      (-> db
+          increase-frame-count
+          handle-end-of-intro))))
+
+(defn start! []
+  (add-game-state (:game @db) "main" {:preload #(swap! db #'game-preload)
+                                      :create  #(swap! db #'game-create)
+                                      :update  #(swap! db #'game-update)})
+  (start-game-state (:game @db) "main"))
+
+
+(defn on-reload []
+  (let [old-db @db
+        old-state (game-state old-db)]
+    (.destroy (:game @db))
+
+    (let [level (levels/levels (:level old-state))]
+      (reset! db (-> old-db
+                     (assoc :game (js/Phaser.Game. 1280 720))
+                     (assoc :floors (:floors level))
+                     (assoc :walls (:walls level))
+                     (assoc :levers (:levers level)))))
+
+    (doseq [[id {:keys [state]}] (-> old-db :levers)]
+      (swap! db assoc-in [:levers id :state] state))
+
+    (start!)
+
+
+    (js/setTimeout
+     #(let [finn (:finn @db)]
+        (set! (.-x finn) (-> old-state :finn :x))
+        (set! (.-y finn) (-> old-state :finn :y)))
+     100)))
