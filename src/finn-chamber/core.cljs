@@ -1,6 +1,7 @@
 (ns finn-chamber.core
   (:require [cljsjs.phaser]
             [finn-chamber.math :refer [abs]]
+            [finn-chamber.util :refer [map-vals]]
             [finn-chamber.wrapper :refer [load-image
                                           load-spritesheet
                                           add-tile-sprite
@@ -19,6 +20,8 @@
                                           set-anchor
                                           set-scale
                                           set-angle
+                                          set-alpha
+                                          sprite-scale-x
                                           physics-collide
                                           physics-overlap
                                           create-cursor-keys
@@ -29,8 +32,23 @@
                                           key-down?]]
             [finn-chamber.levels :as levels]))
 
-
 (enable-console-print!)
+
+(extend-type js/Phaser.Group
+  ISeqable
+  (-seq [group]
+    (let [children (.-children group)]
+      (map #(aget children %) (range (.-length children)))))
+
+    )
+
+;;   ILookup
+;;   (-lookup
+;;     ([o k] (-lookup o k nil))
+;;     ([o k nf] (phaser-get o k get-properties nf))
+
+
+
 
 (defonce db (atom {:level levels/level-1
                    :floor-positions [2 9 16 23 30 37 44]
@@ -41,53 +59,68 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn draw-background [game]
-  (add-tile-sprite game 0 32 1280 720 "background-tiles"))
-
-(defn draw-floor-tile [game group x y]
-  (let [floor (add-sprite game (* x 16) (* y 16) "wall")]
-    (.add group floor)
-    (set-immutable floor true)
-    floor))
-
-(defn draw-floors [{:keys [game level floor-positions] :as db}]
-  (let [spec (:floors level)
-        group (create-group game)]
-    (doall (map (fn [y tiles]
-                  (doall (map-indexed (fn [x yes-no]
-                                        (when yes-no (draw-floor-tile game group x y)))
-                                      tiles))
-                  ) floor-positions spec))
-    (assoc-in db [:groups :floor] group)))
-
-(defn item-pos [x]
+(defn grid-pos [x]
   (* x 16))
 
 (defn item-floor-pos [floor-positions y]
-  (* (nth floor-positions (inc y)) 16))
+  (* (nth floor-positions y) 16))
+
+
+(defn state-angle [state]
+  (case state :left -45 :right 45))
+
+(def state-flip {:left :right
+                 :right :left})
+
+(defn draw-background [game]
+  (add-tile-sprite game 0 32 1280 720 "background-tiles"))
+
+(defn draw-floor-tile [game x y]
+  (doto (add-sprite game x y "wall")
+    (set-immutable true)))
+
+(defn draw-floor-tiles [game floor-positions floor-spec visible?]
+  (map (fn [{:keys [x y group] :as tile}]
+         (let [x (grid-pos x)
+               y (item-floor-pos floor-positions y)
+               sprite (draw-floor-tile game x y)]
+           (when-not (visible? group)
+             (set-alpha sprite 0))
+           (assoc tile :sprite sprite)))
+       floor-spec))
+
+(defn draw-floors [{:keys [game level floor-positions] :as db}]
+  (let [floor-spec (:floors level)
+        visible-groups (:visible level)]
+    (let [tiles (draw-floor-tiles game floor-positions floor-spec visible-groups)
+          floor-groups (apply array (group-by :group tiles))]
+      (-> db
+          (assoc :floors tiles)
+          (assoc-in [:groups :floor] (create-group game (remove nil? (map :sprite tiles))))
+          (update :segments merge floor-groups)))))
 
 (defn create-lever-sprite [game floor-positions x y angle]
-  (doto (add-sprite game (item-pos x) (item-floor-pos floor-positions y) "lever")
+  (doto (add-sprite game (grid-pos x) (item-floor-pos floor-positions (inc y)) "lever")
     (set-angle angle)
     (set-scale 1.2)
     (set-anchor 0.5 1)))
 
 (defn create-lever-base-sprite [game floor-positions x y]
-  (doto (add-sprite game (item-pos x) (item-floor-pos floor-positions y) "lever_base")
+  (doto (add-sprite game (grid-pos x) (item-floor-pos floor-positions (inc y)) "lever_base")
     (set-scale 0.8)
     (set-anchor 0.5 1)))
 
 (defn draw-levers [{{:keys [levers]} :level :keys [game floor-positions] :as db}]
   (let [group (create-group game)]
     (-> (reduce (fn [db lever-id]
-                  (let [{:keys [x y]} (get levers lever-id)
-                        lever (create-lever-sprite game floor-positions x y -45)
+                  (let [{:keys [x y state]} (get levers lever-id)
+                        lever (create-lever-sprite game floor-positions x y (state-angle state))
                         lever-base (create-lever-base-sprite game floor-positions x y)]
                     (.add group lever)
                     (.add group lever-base)
                     (-> db
-                        (assoc-in [:level :levers lever-id :lever] lever)
-                        (assoc-in [:level :levers lever-id :lever-base] lever-base)))
+                        (assoc-in [:level :levers lever-id :sprite] lever)
+                        (assoc-in [:level :levers lever-id :base-sprite] lever-base)))
                   ) db (keys levers))
         (assoc-in [:groups :levers] group))))
 
@@ -95,7 +128,7 @@
   (let [start (nth floor-positions y)
         end (nth floor-positions (inc y))]
     (for [row (range (inc start) end)]
-      (doto (add-sprite game (item-pos x) (item-pos row) "wall")
+      (doto (add-sprite game (grid-pos x) (grid-pos row) "wall")
         (set-immutable true)))))
 
 (defn draw-walls [{:keys [game floor-positions groups level] :as db}]
@@ -113,9 +146,6 @@
     (add-animation finn "walk")
     finn))
 
-(defn sprite-scale-x [sprite amount]
-  (set! (.. sprite -scale -x) amount))
-
 (defn finn-go-left [finn]
   (sprite-scale-x finn (abs (.. finn -scale -x)))
   (set-velocity-x finn -200))
@@ -127,22 +157,60 @@
 (defn finn-jump [finn]
   (set-velocity-y finn -200))
 
+(defn hide-segment [{:keys [game] :as db} name]
+  (println "Hiding " (prn-str name))
+  (let [sprites (get-in db [:segments name])]
+    (run!
+     #(add-tween game (:sprite %) {:alpha 0} 700 js/Phaser.Easing.Cubic.Out)
+     sprites))
+  db)
+
+(defn show-segment [{:keys [game] :as db} name]
+  (println "Showing " (type name))
+  (let [sprites (get-in db [:segments name])]
+    (run!
+     #(add-tween game (:sprite %) {:alpha 1} 700 js/Phaser.Easing.Cubic.Out)
+     sprites))
+  db)
+
+(defn show-hide-segments [db [on-left on-right] state]
+  (let [hide (case state :left on-left :right on-right)
+        show (case state :left on-right :right on-left)]
+    (run! #(show-segment db %) show)
+    (run! #(hide-segment db %) hide)
+    (-> db
+        (update-in [:level :visible] into show)
+        (update-in [:level :visible] #(into #{} (remove hide %))))))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn pull-lever [{:keys [level finn game] :as db}]
-  (let [{:keys [levers]} level]
-    (doseq [[_ {:keys [lever lever-base]}] levers]
-      (when (or (physics-overlap game finn lever)
-                (physics-overlap game finn lever-base))
-        (add-tween game lever {:angle (* -1 (.-angle lever))} 300
-                   #_js/Phaser.Easing.Circular.Out
-                   js/Phaser.Easing.Bounce.Out
-                   ))))
-  db)
+(defn finn-over-lever? [game finn lever]
+  (let [{:keys [sprite base-sprite]} lever]
+    (if (or (physics-overlap game finn sprite)
+            (physics-overlap game finn base-sprite))
+      lever)))
+
+(defn animate-lever [game sprite state]
+  (add-tween game
+             sprite
+             {:angle (-> state state-flip state-angle)} 300
+             js/Phaser.Easing.Bounce.Out))
+
+(defn pull-lever [{:keys [game] :as db} lever]
+  (let [{:keys [sprite base-sprite state hides name]} lever]
+    (animate-lever game sprite state)
+    (-> db
+        (show-hide-segments hides state)
+        (update-in [:level :levers name :state] state-flip))))
+
+(defn handle-space [{{:keys [levers]} :level :keys [finn game] :as db}]
+  (if-let [lever (some #(finn-over-lever? game finn %) (vals levers))]
+    (pull-lever db lever)
+    db))
 
 (defn setup-handlers [{:keys [space-key cursor-keys finn] :as db}]
   (let [{:keys [left right]} cursor-keys]
-    (on-key-down space-key #(dispatch! pull-lever))
+    (on-key-down space-key #(dispatch! handle-space))
 
     (on-key-down left #(play-animation finn "walk" 10 true))
     (on-key-down right #(play-animation finn "walk" 10 true)))
@@ -164,6 +232,8 @@
     (start-physics-system!)
     (draw-background))
 
+  (set! (.. game -scale -scaleMode) js/Phaser.ScaleManager.EXACT_FIT)
+
   (set! (.. game -world -enableBody)  true)
 
   (-> db
@@ -176,12 +246,16 @@
       setup-handlers))
 
 (defn game-update [{:keys [finn groups cursor-keys space-key level game] :as db}]
-
   (let [{:keys [left right up]} cursor-keys
         {:keys [levers]} level
         {floor-group :floor lever-group :levers wall-group :walls} groups]
     (physics-collide game floor-group finn)
     (physics-collide game wall-group finn)
+
+    (doseq [sprite floor-group]
+      (if (= 0 (.-alpha sprite))
+        (set! (.-exists sprite) false)
+        (set! (.-exists sprite) true)))
 
     (cond
       (key-down? left)  (finn-go-left finn)
@@ -193,12 +267,6 @@
       (set-velocity-y finn -400))
 
     db))
-
-(defn restart-game [{:keys [game]}]
-  )
-
-
-(restart-game @db)
 
 
 (defonce started

@@ -30,13 +30,18 @@
 (defn start-physics-system! [game]
   (.. game -physics (startSystem js/Phaser.Physics.ARCADE)))
 
-(defn create-group [game]
-  (.. game -add group))
+(defn create-group
+  ([game]
+   (.. game -add group))
+  ([game children]
+   (doto (create-group game)
+     (.addMultiple (apply array children)))))
 
 (defn add-tween [game sprite props & args]
   (let [tween (.. game -add (tween sprite))
         to-fn (.bind (.-to tween) tween)]
-    (.start (apply to-fn (clj->js props) args))))
+    (.start (apply to-fn (clj->js props) args))
+    tween))
 
 ;; Sprite
 
@@ -58,6 +63,9 @@
 (defn set-scale [sprite scale]
   (.setTo (.-scale sprite) scale))
 
+(defn set-alpha [sprite alpha]
+  (set! (.-alpha sprite) alpha))
+
 (defn add-animation [sprite name]
   (.. sprite -animations (add name)))
 
@@ -66,6 +74,10 @@
 
 (defn stop-animations [sprite]
   (.. sprite -animations (stop nil true)))
+
+(defn sprite-scale-x [sprite amount]
+  (set! (.. sprite -scale -x) amount))
+
 
 ;; Physics
 
