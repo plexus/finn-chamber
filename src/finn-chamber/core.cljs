@@ -75,29 +75,49 @@
 (defn draw-background [game]
   (add-tile-sprite game 0 32 1280 720 "background-tiles"))
 
-(defn draw-floor-tile [game x y]
-  (doto (add-sprite game x y "wall")
-    (set-immutable true)))
+(defn draw-barrier-sprite
+  ([game x y]
+   (draw-barrier-sprite x y true))
+  ([game x y visible?]
+   (doto (add-sprite game x y "wall")
+     (set-immutable true)
+     (set-alpha (if visible? 1 0)))))
 
-(defn draw-floor-tiles [game floor-positions floor-spec visible?]
-  (map (fn [{:keys [x y group] :as tile}]
-         (let [x (grid-pos x)
-               y (item-floor-pos floor-positions y)
-               sprite (draw-floor-tile game x y)]
-           (when-not (visible? group)
-             (set-alpha sprite 0))
-           (assoc tile :sprite sprite)))
-       floor-spec))
+
+(defn draw-barrier-tiles [game y-mapping spec visible?]
+  (->> spec
+       (mapcat (fn [{:keys [x y group] :as tile}]
+                (let [x (grid-pos x)
+                      ys (y-mapping y)]
+                  (for [y ys]
+                    (assoc tile :sprite (draw-barrier-sprite game x y (visible? group)))))))
+       doall))
+
+(defn floor-y-mapping [floor-positions]
+  (fn [y]
+    #{(item-floor-pos floor-positions y)}))
+
+(defn wall-y-mapping [floor-positions]
+  (fn [y]
+    (let [start (nth floor-positions y)
+          end (nth floor-positions (inc y))]
+      (map grid-pos (range (inc start) end)))))
+
+(defn draw-barriers [{:keys [game level] :as db} type y-mapping]
+  (let [spec (get level type)
+        visible? (:visible level)
+        tiles (draw-barrier-tiles game y-mapping spec visible?)
+        groups (apply array (group-by :group tiles))]
+    (-> db
+        (assoc type tiles)
+        (assoc-in [:groups type] (create-group game (remove nil? (map :sprite tiles))))
+        (update :segments #(merge-with into % groups)))))
 
 (defn draw-floors [{:keys [game level floor-positions] :as db}]
-  (let [floor-spec (:floors level)
-        visible-groups (:visible level)]
-    (let [tiles (draw-floor-tiles game floor-positions floor-spec visible-groups)
-          floor-groups (apply array (group-by :group tiles))]
-      (-> db
-          (assoc :floors tiles)
-          (assoc-in [:groups :floor] (create-group game (remove nil? (map :sprite tiles))))
-          (update :segments merge floor-groups)))))
+  (draw-barriers db :floors (floor-y-mapping floor-positions)))
+
+(defn draw-walls [{:keys [game floor-positions level] :as db}]
+  (draw-barriers db :walls (wall-y-mapping floor-positions)))
 
 (defn create-lever-sprite [game floor-positions x y angle]
   (doto (add-sprite game (grid-pos x) (item-floor-pos floor-positions (inc y)) "lever")
@@ -124,20 +144,6 @@
                   ) db (keys levers))
         (assoc-in [:groups :levers] group))))
 
-(defn draw-wall [game floor-positions x y]
-  (let [start (nth floor-positions y)
-        end (nth floor-positions (inc y))]
-    (for [row (range (inc start) end)]
-      (doto (add-sprite game (grid-pos x) (grid-pos row) "wall")
-        (set-immutable true)))))
-
-(defn draw-walls [{:keys [game floor-positions groups level] :as db}]
-  (let [{:keys [walls]} level
-        group (create-group game)]
-    (doseq [[x y] walls]
-      (run! #(.add group %) (draw-wall game floor-positions x y)))
-    (assoc-in db [:groups :walls] group)))
-
 (defn create-finn [game]
   (let [finn (add-sprite game 900 (+ 16 48) "finn")]
     (.setTo (.-scale finn) 1.5)
@@ -158,7 +164,6 @@
   (set-velocity-y finn -200))
 
 (defn hide-segment [{:keys [game] :as db} name]
-  (println "Hiding " (prn-str name))
   (let [sprites (get-in db [:segments name])]
     (run!
      #(add-tween game (:sprite %) {:alpha 0} 700 js/Phaser.Easing.Cubic.Out)
@@ -166,7 +171,6 @@
   db)
 
 (defn show-segment [{:keys [game] :as db} name]
-  (println "Showing " (type name))
   (let [sprites (get-in db [:segments name])]
     (run!
      #(add-tween game (:sprite %) {:alpha 1} 700 js/Phaser.Easing.Cubic.Out)
@@ -233,7 +237,6 @@
     (draw-background))
 
   (set! (.. game -scale -scaleMode) js/Phaser.ScaleManager.EXACT_FIT)
-
   (set! (.. game -world -enableBody)  true)
 
   (-> db
@@ -248,7 +251,7 @@
 (defn game-update [{:keys [finn groups cursor-keys space-key level game] :as db}]
   (let [{:keys [left right up]} cursor-keys
         {:keys [levers]} level
-        {floor-group :floor lever-group :levers wall-group :walls} groups]
+        {floor-group :floors lever-group :levers wall-group :walls} groups]
     (physics-collide game floor-group finn)
     (physics-collide game wall-group finn)
 

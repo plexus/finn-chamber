@@ -3,6 +3,7 @@
 
 
 (def lever? #{:A :B :C :D :E :F :G :H :I :J :K})
+(def barrier? #{:| :1 :2 :3 :4 :5 :6 :7 :8 :9 :0 :#})
 (def item-chars {\| :wall \A :A \B :B \C :C \D :D \E :E \F \F \G :G \H :H \I :I \J :J \K :K})
 
 (defn map-grid
@@ -21,13 +22,14 @@
        (remove #(nil? (second %)))
        (into {})))
 
-(defn parse-floors [floor-rows]
+(defn parse-barriers [rows]
   (->> (map-grid (fn [x y char]
-                   (when-not (= char \ )
-                     {:x x
-                      :y y
-                      :group (keyword (str char))})
-                   ) floor-rows)
+                   (let [group (keyword char)]
+                     (when (barrier? group)
+                       {:x x
+                        :y y
+                        :group group}))
+                   ) rows)
        (remove nil?)
        (into [])))
 
@@ -40,25 +42,14 @@
        (remove nil?)
        (into {})))
 
-(defn parse-walls [item-rows]
-  (->>
-
-   (for [y (range (count item-rows))
-             x (range (count (first item-rows)))]
-         (let [item-row (nth item-rows y)
-               item-char (nth item-row x)
-               item (get item-chars item-char)]
-           (if (= :wall item)
-             [x y])))
-       (remove nil?)))
-
 (defn parse-level-spec [spec]
   (let [pairs (partition 2 2 [(repeat 80 \ )] spec)
         floor-rows (map first pairs)
         item-rows (map last pairs)]
-    {:floors (parse-floors floor-rows)
+    {:floors (parse-barriers floor-rows)
+     :walls (parse-barriers item-rows)
      :levers (parse-levers item-rows)
-     :walls (parse-walls item-rows)}))
+     }))
 
 (defn level [spec & {:as props}]
   (deep-merge (parse-level-spec spec)
@@ -73,16 +64,15 @@
     "####22222#################33333#################################################"
     "|                     ||||                                                     |"
     "####                  ##################################################     ###"
-    "|     C               ||||                       |                             |"
+    "|     C               5555                       |                             |"
     "##############        #############        #####################################"
     "|     D               ||||                                                     |"
     "#################################################################        #######"
     "|              F                 |                   G                         |"
     "################################################################################"]
-   :visible #{:# :1 :4 :3}
-   :levers {:E {:state :right
-                :hides [#{} #{:1}]}
-            :B {:hides [#{} #{}]}
+   :visible #{:# :| :1 :4 :3 :5}
+   :levers {:E {:hides [#{:1} #{}]}
+            :B {:hides [#{} #{:5}]}
             :C {:hides [#{:4} #{}]}
             :A {:hides [#{:3} #{}]}
             :D {:hides [#{} #{}]}}))
