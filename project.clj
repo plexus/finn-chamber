@@ -25,15 +25,15 @@
 
               :compiler {:main finn-chamber.core
                          :asset-path "js/compiled/out"
-                         :output-to "resources/public/js/compiled/dev.js"
+                         :output-to "resources/public/js/compiled/main.js"
                          :output-dir "resources/public/js/compiled/out"
                          :source-map-timestamp true
                          :preloads [devtools.preload]}}
              {:id "min"
               :source-paths ["src"]
-              :compiler {:output-to "resources/public/js/compiled/prod.js"
-                         :main finn-chamber.core
-                         :optimizations :advanced
+              :compiler {:main finn-chamber.core
+                         :output-to "resources/public/js/compiled/main.js"
+                         :optimizations :simple
                          :pretty-print false}}]}
 
   :figwheel {:css-dirs ["resources/public/css"]})

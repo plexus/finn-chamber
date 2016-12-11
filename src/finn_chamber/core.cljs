@@ -361,7 +361,7 @@
           increase-frame-count
           handle-end-of-intro))))
 
-(defn start! []
+(defn ^:export start! []
   (add-game-state (:game @db) "main" {:preload #(swap! db #'game-preload)
                                       :create  #(swap! db #'game-create)
                                       :update  #(swap! db #'game-update)})
@@ -391,3 +391,6 @@
         (set! (.-x finn) (-> old-state :finn :x))
         (set! (.-y finn) (-> old-state :finn :y)))
      100)))
+
+
+(start!)
